@@ -1,81 +1,76 @@
 import os
 from flask import Flask, request
 from telegram import Bot, Update
-from telegram.ext import Dispatcher, CommandHandler, MessageHandler, Filters
-import logging
+from telegram.ext import Dispatcher, CommandHandler, MessageHandler, Filters, CallbackContext
+from telegram.ext.dispatcher import run_async
 
-# ------------------- Variables -------------------
-BOT_TOKEN = "8216881905:AAFo0Lnufs8crn2IZ-p8gSaaxV3QK-i0KLs"  # your bot token
-WEBHOOK_URL = "https://testing-20rh.onrender.com"              # your render app URL
-# -------------------------------------------------
+# ===== VARIABLES =====
+BOT_TOKEN = os.getenv("BOT_TOKEN")  # Your Telegram bot token
+WEBHOOK_URL = os.getenv("WEBHOOK_URL")  # Your webhook URL
+CONVERSATION_MEMORY = {}  # Stores ongoing conversations with users
 
-# ------------------ Logging ----------------------
-logging.basicConfig(
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO
-)
-logger = logging.getLogger(__name__)
-# -------------------------------------------------
-
-# ------------- Flask & Bot Setup -----------------
+# ===== FLASK APP =====
 app = Flask(__name__)
 bot = Bot(token=BOT_TOKEN)
-dispatcher = Dispatcher(bot, None, use_context=True)
-# -------------------------------------------------
+dispatcher = Dispatcher(bot, None, workers=0)
 
-# ---------------- AI Answer Function -------------
-def get_ai_answer(question):
+# ===== COMMANDS =====
+def start_sarah(update: Update, context: CallbackContext):
+    user_id = update.message.from_user.id
+    CONVERSATION_MEMORY[user_id] = []  # Initialize conversation memory
+    update.message.reply_text("Hello! I am Sarah, your Forex assistant. Ask me anything about Forex.")
+
+def handle_message(update: Update, context: CallbackContext):
+    user_id = update.message.from_user.id
+    text = update.message.text
+
+    # If user hasn't started /sarah session, ignore
+    if user_id not in CONVERSATION_MEMORY:
+        return
+
+    # Append message to conversation memory
+    CONVERSATION_MEMORY[user_id].append({"role": "user", "content": text})
+
+    # Generate response based on conversation memory
+    response = generate_forex_response(CONVERSATION_MEMORY[user_id])
+
+    # Append bot response to memory
+    CONVERSATION_MEMORY[user_id].append({"role": "assistant", "content": response})
+
+    # Send response
+    update.message.reply_text(response)
+
+# ===== FOREX RESPONSE FUNCTION =====
+def generate_forex_response(conversation):
     """
-    Replace this with your AI logic or API call to fetch answers.
-    For now, a simple placeholder function.
+    Simulate Sarah answering Forex questions.
+    This function can be extended with your AI logic.
     """
-    # Example of simple responses
-    question_lower = question.lower()
-    if "pip" in question_lower:
-        return ("In forex, a pip (percentage in point) is the smallest price move "
-                "that a given exchange rate can make based on market convention. "
-                "For most currency pairs, 1 pip = 0.0001. To calculate pips: "
-                "subtract the entry price from the exit price and multiply by 10,000.")
-    elif "lot" in question_lower:
-        return "A lot is a standardized quantity of the base currency in forex trading. 1 standard lot = 100,000 units."
-    else:
-        return "I'm searching the forex info... Here's a quick answer: " + question
+    last_question = conversation[-1]["content"]
 
-# -------------------------------------------------
+    # Example simple logic (expand this for real AI knowledge)
+    response = f"Answering your Forex question: '{last_question}'.\n\n" \
+               "I can explain pips, lot sizes, risk management, strategies, " \
+               "support/resistance, supply/demand, leverage, and more."
+    return response
 
-# ---------------- Commands -----------------------
-def sarah_command(update, context):
-    """Handle /sarah command for any forex question."""
-    if context.args:
-        user_question = ' '.join(context.args)
-        answer = get_ai_answer(user_question)
-    else:
-        answer = "Please ask a forex-related question after /sarah."
-    update.message.reply_text(answer)
+# ===== DISPATCHER HANDLERS =====
+dispatcher.add_handler(CommandHandler("sarah", start_sarah))
+dispatcher.add_handler(MessageHandler(Filters.text & (~Filters.command), handle_message))
 
-# Add handlers
-dispatcher.add_handler(CommandHandler("sarah", sarah_command))
-# -------------------------------------------------
-
-# ------------- Flask Webhook Route ---------------
-@app.route('/', methods=['POST'])
+# ===== FLASK ROUTE =====
+@app.route("/", methods=["POST", "GET"])
 def webhook():
-    """Receives updates from Telegram."""
-    update = Update.de_json(request.get_json(force=True), bot)
-    dispatcher.process_update(update)
-    return "ok", 200
+    if request.method == "POST":
+        update = Update.de_json(request.get_json(force=True), bot)
+        dispatcher.process_update(update)
+        return "OK", 200
+    else:
+        return "Hello, Sarah Bot is running.", 200
 
-@app.route('/', methods=['GET'])
-def index():
-    return "Bot is live!", 200
-# -------------------------------------------------
-
-# ---------------- Set Webhook --------------------
-@app.before_first_request
-def set_webhook():
-    bot.set_webhook(WEBHOOK_URL)
-# -------------------------------------------------
-
-# ----------------- Run Flask ---------------------
+# ===== MAIN =====
 if __name__ == "__main__":
+    # Set webhook automatically
+    bot.set_webhook(url=WEBHOOK_URL)
+    print("Webhook set and bot running...")
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
-# -------------------------------------------------
