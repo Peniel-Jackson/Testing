@@ -1,4 +1,5 @@
 python-telegram-bot==13.15
-Flask
+Flask==2.2.5
+gunicorn
 requests
-python-dotenv
+imghdr-py
