@@ -1,9 +1,6 @@
 services:
   - type: web
-    name: firepips-bot
+    name: sarah-ai-bot
     env: python
     buildCommand: "pip install -r requirements.txt"
     startCommand: "gunicorn main:app"
-    envVars:
-      - key: PORT
-        value: 10000
