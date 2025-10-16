@@ -1,92 +1,120 @@
-from flask import Flask, request
-import requests
-import openai
 import os
+import logging
+from flask import Flask, request
+import telebot
+from openai import OpenAI
+import requests
 
-# ✅ FIX for proxy bug — use the older stable OpenAI library syntax
-openai.api_key = os.getenv("OPENAI_API_KEY")
+# ======================
+# --- Configuration ----
+# ======================
+BOT_TOKEN = os.getenv("BOT_TOKEN", "8216881905:AAFo0Lnufs8crn2IZ-p8gSaaxV3QK-i0KLs")
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
+WEBHOOK_PATH = f"/webhook/{BOT_TOKEN}"  # FIXED: webhook path now explicit
+WEBHOOK_URL = f"https://testing-20rh.onrender.com{WEBHOOK_PATH}"
 
+# ======================
+# --- Setup Logging ----
+# ======================
+logging.basicConfig(level=logging.INFO)
+
+# ======================
+# --- Init Flask & Bot --
+# ======================
 app = Flask(__name__)
+bot = telebot.TeleBot(BOT_TOKEN)
+client = OpenAI(api_key=OPENAI_API_KEY)
 
-BOT_TOKEN = os.getenv("BOT_TOKEN")
+# ======================
+# --- Set Webhook -------
+# ======================
+def set_webhook():
+    url = f"https://api.telegram.org/bot{BOT_TOKEN}/setWebhook?url={WEBHOOK_URL}"
+    res = requests.get(url)
+    if res.status_code == 200:
+        logging.info(f"Webhook set successfully ✅ -> {WEBHOOK_URL}")
+    else:
+        logging.error(f"Failed to set webhook ❌: {res.text}")
 
-# ✅ Sarah AI Forex Expert Function
-def ask_sarah(prompt):
-    # Topics allowed: forex, bitcoin trading, gold (xauusd) trading
-    forex_keywords = ["forex", "trading", "support", "resistance", "candlestick", "chart", "pip", "lot", "eurusd", "gbpusd", "usd", "xauusd", "gold", "btc", "bitcoin"]
-    if not any(word in prompt.lower() for word in forex_keywords):
-        return "⚠️ I only answer Forex, Bitcoin trading, and XAUUSD (gold) related questions. Please ask something in that area."
+set_webhook()
+
+# ======================
+# --- Forex Answerer ----
+# ======================
+def get_forex_answer(question: str) -> str:
+    """Generate AI-powered forex or trading answer"""
+    try:
+        response = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "system", "content": (
+                    "You are Sarah, a forex and trading assistant. "
+                    "You only answer forex, trading, Bitcoin, or XAUUSD-related questions. "
+                    "If a question is outside forex/trading, reply: "
+                    "'Sorry, I only answer forex and trading-related questions.' "
+                    "When explaining, use examples, steps, and simple explanations a beginner can understand."
+                )},
+                {"role": "user", "content": question}
+            ]
+        )
+        return response.choices[0].message.content.strip()
+    except Exception as e:
+        logging.error(f"OpenAI Error: {e}")
+        return "Sorry, there was an error fetching your forex answer."
+
+# ======================
+# --- Telegram Routes ---
+# ======================
+@app.route(WEBHOOK_PATH, methods=["POST"])  # FIXED path
+def webhook():
+    update = request.get_json()
+    if not update:
+        return "No update", 400
 
     try:
-        response = openai.ChatCompletion.create(
-            model="gpt-3.5-turbo",
-            messages=[
-                {
-                    "role": "system",
-                    "content": (
-                        "You are Sarah, a friendly and intelligent forex mentor from FirePips Forex Academy. "
-                        "You explain concepts like price action, support/resistance, risk management, candlestick patterns, "
-                        "and trading psychology clearly and helpfully. "
-                        "You can also explain Bitcoin and XAUUSD trading concepts, but nothing outside trading."
-                    )
-                },
-                {"role": "user", "content": prompt}
-            ],
-            max_tokens=400,
-            temperature=0.8
-        )
-        return response.choices[0].message["content"].strip()
+        bot.process_new_updates([telebot.types.Update.de_json(update)])
     except Exception as e:
-        print("Sarah error:", e)
-        return "😅 Sarah is currently unavailable. Please try again soon."
+        logging.error(f"Error processing update: {e}")
 
-# ✅ Send Telegram message
-def send_message(chat_id, text):
-    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
-    payload = {"chat_id": chat_id, "text": text}
-    requests.post(url, json=payload)
+    return "OK", 200
 
-# ✅ Webhook route
-@app.route(f"/{BOT_TOKEN}", methods=["POST"])
-def telegram_webhook():
-    data = request.get_json()
 
-    if not data or "message" not in data:
-        return "ok"
-
-    chat_id = data["message"]["chat"]["id"]
-    text = data["message"].get("text", "").strip()
-
-    # Start command
-    if text.lower() == "/start":
-        send_message(
-            chat_id,
-            "👋 Hello! I'm *Sarah*, your Forex mentor from FirePips Forex Academy.\n\n"
-            "You can ask me any trading question — like:\n"
-            "💬 /sarah what are support and resistance zones?\n"
-            "💬 /sarah how do I trade gold (XAUUSD)?\n\n"
-            "I only answer forex, bitcoin, or gold-related trading questions."
-        )
-        return "ok"
-
-    # Sarah command
-    if text.lower().startswith("/sarah"):
-        user_question = text[6:].strip()
-        if not user_question:
-            send_message(chat_id, "Please ask a question after /sarah, e.g. `/sarah what is a stop loss?`")
-            return "ok"
-
-        answer = ask_sarah(user_question)
-        send_message(chat_id, answer)
-        return "ok"
-
-    # Fallback for non-sarah commands
-    send_message(chat_id, "Use /sarah followed by your trading question, or /start to begin.")
-    return "ok"
-
-@app.route("/")
+@app.route("/", methods=["GET"])
 def home():
-    return "🔥 Sarah AI Forex Bot Running Successfully!"
+    return "Sarah Forex Bot is live ✅", 200
 
+# ======================
+# --- Bot Commands -----
+# ======================
+@bot.message_handler(commands=["start"])
+def start_command(message):
+    bot.reply_to(
+        message,
+        "Hey there 👋 I’m Sarah — your forex trading assistant!\n\n"
+        "I can help you understand trading concepts, calculate risk, "
+        "and answer questions about forex, Bitcoin, or XAUUSD.\n\n"
+        "Just type your question anytime, for example:\n"
+        "• What does pip mean?\n"
+        "• How can I calculate my lot size?\n"
+        "• What are support and resistance zones?"
+    )
+
+
+@bot.message_handler(func=lambda msg: True)
+def handle_message(message):
+    question = message.text.strip()
+
+    # Only handle forex/trading related messages
+    keywords = ["forex", "pip", "lot", "trade", "xauusd", "gold", "bitcoin", "btc", "support", "resistance"]
+    if any(word in question.lower() for word in keywords):
+        answer = get_forex_answer(question)
+        bot.reply_to(message, answer)
+    else:
+        bot.reply_to(message, "Sorry, I only answer forex and trading-related questions.")
+
+
+# ======================
+# --- Run Flask --------
+# ======================
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=int(os.getenv("PORT", 5000)))
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 10000)))
